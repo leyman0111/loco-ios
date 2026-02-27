@@ -27,9 +27,8 @@ class AuthViewModel: ObservableObject {
                 switch result {
                 case .success(let token):
                     self?.accessToken = token
+                    APIService.shared.authToken = token
                     self?.isAuthenticated = true
-                    self?.alertMessage = "Авторизовано в Яндекс! \(token)"
-                    self?.showAlert = true
                 case .failure(let error):
                     self?.errorMessage = error.localizedDescription
                     self?.alertMessage = "Ошибка авторизации: \(error.localizedDescription)"
