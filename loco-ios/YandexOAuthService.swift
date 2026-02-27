@@ -12,7 +12,7 @@ class YandexOAuthService: NSObject, ObservableObject {
     
     // MARK: - Configuration
     
-    private let clientId = "YOUR_YANDEX_CLIENT_ID" // Замените на ваш Client ID
+    private let clientId = "00770f54e5694f6287ed2ee95349a837" // Замените на ваш Client ID
     private let redirectUri = "loco://oauth/yandex"
     private let authURL = "https://oauth.yandex.ru/authorize"
     
