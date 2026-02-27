@@ -153,30 +153,10 @@ struct LoginView: View {
         }
     }
     
-    // MARK: - Logo View (matches design exactly)
+    // MARK: - Logo View
     
     private var logoView: some View {
-        HStack(spacing: 0) {
-            // "Loc" part
-            Text("Loc")
-                .font(.system(size: 56, weight: .bold, design: .rounded))
-                .foregroundColor(LocoTheme.Colors.navy)
-            
-            // "O" replaced by map pin icon
-            ZStack {
-                // Navy teardrop pin shape
-                Image(systemName: "mappin.circle.fill")
-                    .font(.system(size: 52, weight: .bold))
-                    .foregroundColor(LocoTheme.Colors.navy)
-                
-                // Coral dot inside pin
-                Circle()
-                    .fill(LocoTheme.Colors.coral)
-                    .frame(width: 14, height: 14)
-                    .offset(y: -4)
-            }
-            .frame(width: 52, height: 56)
-        }
+        LocoLogoView(fontSize: 56)
     }
     
     // MARK: - Input Field

@@ -102,6 +102,19 @@ struct ReactionDto: Codable, Identifiable {
     let type: ReactionType?
 }
 
+// MARK: - PostDto (create/publish post)
+
+struct PostDto: Codable {
+    let id: Int64?
+    let author: Author?
+    let created: String?
+    let text: String?
+    let category: String?
+    let contents: [Int64]?
+    let latitude: Float?
+    let longitude: Float?
+}
+
 // MARK: - PostPreview (bottom sheet)
 
 struct PostPreview: Codable {

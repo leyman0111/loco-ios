@@ -26,6 +26,7 @@ class MapScreenViewModel: ObservableObject {
     @Published var isLoadingPreview = false
     @Published var errorMessage: String?
     @Published var activeCategories: Set<PostCategory> = Set(PostCategory.allCases)
+    @Published var showCreatePost = false
     
     @Published var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(
@@ -46,7 +47,6 @@ class MapScreenViewModel: ObservableObject {
             distance: APIConfig.Map.defaultRadiusMeters,
             categories: activeCategories.isEmpty ? nil : activeCategories.map { $0.rawValue }
         )
-        
         do {
             let marks = try await api.getPostMarks(scope: scope)
             annotations = marks.compactMap { mark in
@@ -69,14 +69,12 @@ class MapScreenViewModel: ObservableObject {
         selectedPostId = postId
         isLoadingPreview = true
         selectedPreview = nil
-        
         do {
             let preview = try await api.getPostPreview(id: postId)
             selectedPreview = preview
         } catch {
             errorMessage = error.localizedDescription
         }
-        
         isLoadingPreview = false
     }
     
@@ -108,7 +106,7 @@ struct MapScreenView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             
-            // Map
+            // Map fills entire screen
             Map(coordinateRegion: $viewModel.region,
                 annotationItems: viewModel.annotations) { annotation in
                 MapAnnotation(coordinate: annotation.coordinate) {
@@ -120,14 +118,14 @@ struct MapScreenView: View {
             }
             .ignoresSafeArea()
             
-            // Top overlay: Logo + Category filters
+            // Top overlay: Logo row + Category filter row
             VStack(spacing: 0) {
                 topBar
                 categoryFilters
                 Spacer()
             }
             
-            // FAB: Create post button
+            // FAB: Create post button (bottom-right, above sheet)
             HStack {
                 Spacer()
                 createButton
@@ -147,42 +145,50 @@ struct MapScreenView: View {
         .task {
             await viewModel.loadMarkers()
         }
+        .fullScreenCover(isPresented: $viewModel.showCreatePost) {
+            CreatePostView(isPresented: $viewModel.showCreatePost)
+        }
     }
     
-    // MARK: - Top Bar (Logo)
+    // MARK: - Top Bar
     
     private var topBar: some View {
         HStack {
-            Spacer()
-            // Logo
-            HStack(spacing: 0) {
-                Text("Loc")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
+            // Settings button (left)
+            Button(action: {
+                // TODO: Navigate to settings
+            }) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 20))
                     .foregroundColor(LocoTheme.Colors.navy)
-                
-                ZStack {
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundColor(LocoTheme.Colors.navy)
-                    
-                    Circle()
-                        .fill(LocoTheme.Colors.coral)
-                        .frame(width: 8, height: 8)
-                        .offset(y: -2)
-                }
-                .frame(width: 26, height: 28)
+                    .frame(width: 40, height: 40)
+                    .background(Color.white.opacity(0.85))
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.08), radius: 6, x: 0, y: 2)
             }
+            .padding(.leading, 16)
+            
             Spacer()
+            
+            // Logo (center)
+            LocoLogoView(fontSize: 28)
+            
+            Spacer()
+            
+            // Placeholder to balance layout
+            Color.clear
+                .frame(width: 40, height: 40)
+                .padding(.trailing, 16)
         }
         .padding(.top, 8)
         .padding(.bottom, 4)
     }
     
-    // MARK: - Category Filters
+    // MARK: - Category Filters (horizontal scroll, compact pills)
     
     private var categoryFilters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(PostCategory.allCases, id: \.rawValue) { category in
                     CategoryPill(
                         category: category,
@@ -192,8 +198,8 @@ struct MapScreenView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
     }
     
@@ -201,7 +207,7 @@ struct MapScreenView: View {
     
     private var createButton: some View {
         Button(action: {
-            // TODO: Navigate to create post
+            viewModel.showCreatePost = true
         }) {
             Image(systemName: "plus")
                 .font(.system(size: 22, weight: .bold))
@@ -221,7 +227,6 @@ struct MapScreenView: View {
                 .fill(Color.gray.opacity(0.3))
                 .frame(width: 40, height: 4)
                 .padding(.top, 12)
-            
             ProgressView()
                 .padding(.vertical, 24)
         }
@@ -232,7 +237,7 @@ struct MapScreenView: View {
     }
 }
 
-// MARK: - Category Pill
+// MARK: - Category Pill (compact)
 
 struct CategoryPill: View {
     let category: PostCategory
@@ -241,30 +246,30 @@ struct CategoryPill: View {
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Text(category.emoji)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                 Text(category.displayName)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isActive ? LocoTheme.Colors.textPrimary : LocoTheme.Colors.textSecondary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(
                 isActive
-                    ? Color(hex: category.color).opacity(0.35)
-                    : Color.white.opacity(0.85)
+                    ? Color(hex: category.color).opacity(0.4)
+                    : Color.white.opacity(0.88)
             )
-            .cornerRadius(20)
+            .cornerRadius(16)
             .overlay(
-                RoundedRectangle(cornerRadius: 20)
+                RoundedRectangle(cornerRadius: 16)
                     .stroke(
                         isActive ? Color(hex: category.color) : Color.gray.opacity(0.2),
                         lineWidth: 1
                     )
             )
         }
-        .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 2)
+        .shadow(color: .black.opacity(0.06), radius: 3, x: 0, y: 1)
     }
 }
 
@@ -277,7 +282,6 @@ struct MapPinView: View {
                 .fill(LocoTheme.Colors.coral)
                 .frame(width: 16, height: 16)
                 .shadow(color: LocoTheme.Colors.coral.opacity(0.5), radius: 4, x: 0, y: 2)
-            
             Circle()
                 .stroke(Color.white, lineWidth: 2)
                 .frame(width: 16, height: 16)
@@ -309,9 +313,7 @@ struct PostPreviewSheet: View {
                 if let contentId = preview.contents?.first,
                    let url = APIService.shared.contentURL(id: contentId) {
                     AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .scaledToFill()
+                        image.resizable().scaledToFill()
                     } placeholder: {
                         Color(hex: "F0F0F0")
                     }
@@ -321,15 +323,12 @@ struct PostPreviewSheet: View {
                 }
                 
                 VStack(alignment: .leading, spacing: 6) {
-                    // Post text
                     if let text = preview.text {
                         Text(text)
                             .font(.system(size: 15, weight: .medium))
                             .foregroundColor(LocoTheme.Colors.textPrimary)
                             .lineLimit(3)
                     }
-                    
-                    // Reactions
                     if let reactions = preview.reactions, !reactions.isEmpty {
                         let grouped = Dictionary(grouping: reactions) { $0.type }
                         HStack(spacing: 6) {
@@ -342,7 +341,6 @@ struct PostPreviewSheet: View {
                         }
                     }
                 }
-                
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -353,12 +351,9 @@ struct PostPreviewSheet: View {
         .cornerRadius(20, corners: [.topLeft, .topRight])
         .shadow(color: .black.opacity(0.1), radius: 20, x: 0, y: -4)
         .gesture(
-            DragGesture()
-                .onEnded { value in
-                    if value.translation.height > 50 {
-                        onDismiss()
-                    }
-                }
+            DragGesture().onEnded { value in
+                if value.translation.height > 50 { onDismiss() }
+            }
         )
     }
 }

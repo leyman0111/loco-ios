@@ -106,10 +106,51 @@ class APIService {
         return try await request(path: "/posts/previews/\(id)")
     }
     
+    /// POST /posts — create draft post
+    func createDraftPost() async throws -> PostDto {
+        return try await request(path: "/posts", method: "POST")
+    }
+    
+    /// PUT /posts — publish post with text, category, location
+    func publishPost(postDto: PostDto) async throws -> PostDto {
+        return try await request(path: "/posts", method: "PUT", body: postDto)
+    }
+    
     // MARK: - Content
     
     /// Returns URL for downloading content by ID
     func contentURL(id: Int64) -> URL? {
         return URL(string: APIConfig.baseURL + "/contents/\(id)")
+    }
+    
+    /// POST /contents — upload image for a post
+    func uploadContent(postId: Int64, imageData: Data, type: String) async throws {
+        guard let url = URL(string: APIConfig.baseURL + "/contents?postId=\(postId)&type=\(type)") else {
+            throw APIError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        if let token = authToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"image.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.serverError((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
     }
 }
