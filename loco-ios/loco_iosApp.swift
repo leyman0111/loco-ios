@@ -11,7 +11,7 @@ import SwiftUI
 struct loco_iosApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            LoginView()
         }
     }
 }
