@@ -55,12 +55,9 @@ struct LoginView: View {
                         .font(LocoTheme.Typography.body(15))
                         .foregroundColor(LocoTheme.Colors.textPrimary)
                     
-                    Button(action: {
-                        // TODO: Navigate to sign up
-                    }) {
+                    Button(action: {}) {
                         Text("Sign up")
-                            .font(LocoTheme.Typography.body(15))
-                            .fontWeight(.semibold)
+                            .font(.system(size: 15, weight: .bold))
                             .foregroundColor(LocoTheme.Colors.textPrimary)
                     }
                 }
@@ -85,9 +82,32 @@ struct LoginView: View {
                 
                 // OAuth buttons
                 HStack(spacing: LocoTheme.Spacing.lg) {
-                    oauthButton(icon: "🇬", action: viewModel.loginWithGoogle)
-                    oauthButton(icon: "Я", bgColor: Color(hex: "FFCC00"), action: viewModel.loginWithYandex)
-                    oauthButton(icon: "ВК", bgColor: Color(hex: "4680C2"), textColor: .white, action: viewModel.loginWithVK)
+                    // Google
+                    oauthButton(bgColor: .white, action: viewModel.loginWithGoogle) {
+                        Text("G")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.red, .blue, .green, .yellow],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+                    
+                    // Yandex
+                    oauthButton(bgColor: Color(hex: "FFCC00"), action: viewModel.loginWithYandex) {
+                        Text("Я")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.red)
+                    }
+                    
+                    // VK
+                    oauthButton(bgColor: Color(hex: "4680C2"), action: viewModel.loginWithVK) {
+                        Text("ВК")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundColor(.white)
+                    }
                 }
                 .padding(.top, LocoTheme.Spacing.md)
                 
@@ -100,6 +120,9 @@ struct LoginView: View {
                 message: Text(viewModel.alertMessage),
                 dismissButton: .default(Text("OK"))
             )
+        }
+        .fullScreenCover(isPresented: $viewModel.isAuthenticated) {
+            MapScreenView()
         }
     }
     
@@ -114,42 +137,45 @@ struct LoginView: View {
             Circle()
                 .fill(LocoTheme.Colors.softBlue)
                 .frame(width: 280, height: 280)
-                .offset(x: -100, y: -250)
+                .offset(x: -100, y: -300)
             
             // Golden circle bottom-right
             Circle()
                 .fill(LocoTheme.Colors.goldenSand)
                 .frame(width: 320, height: 320)
-                .offset(x: 150, y: 350)
+                .offset(x: 150, y: 300)
             
             // Blue circle bottom-left
             Circle()
                 .fill(LocoTheme.Colors.softBlue.opacity(0.6))
                 .frame(width: 200, height: 200)
-                .offset(x: -120, y: 450)
+                .offset(x: -120, y: 420)
         }
     }
     
-    // MARK: - Logo View
+    // MARK: - Logo View (matches design exactly)
     
     private var logoView: some View {
         HStack(spacing: 0) {
-            Text("Loco")
-                .font(LocoTheme.Typography.logo(56))
+            // "Loc" part
+            Text("Loc")
+                .font(.system(size: 56, weight: .bold, design: .rounded))
                 .foregroundColor(LocoTheme.Colors.navy)
             
-            // Location pin icon
+            // "O" replaced by map pin icon
             ZStack {
+                // Navy teardrop pin shape
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 52, weight: .bold))
+                    .foregroundColor(LocoTheme.Colors.navy)
+                
+                // Coral dot inside pin
                 Circle()
                     .fill(LocoTheme.Colors.coral)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 14)
                     .offset(y: -4)
-                
-                Image(systemName: "mappin")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(LocoTheme.Colors.navy)
             }
-            .offset(x: -8)
+            .frame(width: 52, height: 56)
         }
     }
     
@@ -177,11 +203,9 @@ struct LoginView: View {
     
     // MARK: - OAuth Button
     
-    private func oauthButton(icon: String, bgColor: Color = .white, textColor: Color = .black, action: @escaping () -> Void) -> some View {
+    private func oauthButton<Content: View>(bgColor: Color, action: @escaping () -> Void, @ViewBuilder label: () -> Content) -> some View {
         Button(action: action) {
-            Text(icon)
-                .font(.system(size: 28, weight: .bold))
-                .foregroundColor(textColor)
+            label()
                 .frame(width: 70, height: 70)
                 .background(bgColor)
                 .clipShape(Circle())
