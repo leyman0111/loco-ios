@@ -49,7 +49,7 @@ class APIService {
     // Token storage (in-memory for now)
     var authToken: String?
     
-    // MARK: - Generic Request
+    // MARK: - Generic Request (returns Decodable)
     
     private func request<T: Decodable>(
         path: String,
@@ -60,19 +60,19 @@ class APIService {
             throw APIError.invalidURL
         }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         if let token = authToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         
         if let body = body {
-            request.httpBody = try JSONEncoder().encode(body)
+            urlRequest.httpBody = try JSONEncoder().encode(body)
         }
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw APIError.noData
@@ -94,6 +94,45 @@ class APIService {
         }
     }
     
+    // MARK: - Generic Void Request (no response body expected)
+    
+    private func voidRequest(
+        path: String,
+        method: String = "DELETE",
+        body: Encodable? = nil
+    ) async throws {
+        guard let url = URL(string: APIConfig.baseURL + path) else {
+            throw APIError.invalidURL
+        }
+        
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authToken {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        if let body = body {
+            urlRequest.httpBody = try JSONEncoder().encode(body)
+        }
+        
+        let (_, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.noData
+        }
+        
+        switch httpResponse.statusCode {
+        case 200...299:
+            return
+        case 401:
+            throw APIError.unauthorized
+        default:
+            throw APIError.serverError(httpResponse.statusCode)
+        }
+    }
+    
     // MARK: - Posts
     
     /// POST /posts/scope — get post markers in area
@@ -106,38 +145,66 @@ class APIService {
         return try await request(path: "/posts/previews/\(id)")
     }
     
-    /// POST /posts — create draft post
+    /// POST /posts — create draft post (called when CreatePostView opens)
     func createDraftPost() async throws -> PostDto {
         return try await request(path: "/posts", method: "POST")
     }
     
-    /// PUT /posts — publish post with text, category, location
+    /// PUT /posts — save changes and publish post (PUBLISHED status)
     func publishPost(postDto: PostDto) async throws -> PostDto {
         return try await request(path: "/posts", method: "PUT", body: postDto)
     }
     
     // MARK: - Content
     
-    /// Returns URL for downloading content by ID
-    func contentURL(id: Int64) -> URL? {
-        return URL(string: APIConfig.baseURL + "/contents/\(id)")
+    /// GET /contents/{id}?size=MEDIUM — download content image data
+    func getContentData(id: Int64, size: String = "MEDIUM") async throws -> Data {
+        guard let url = URL(string: APIConfig.baseURL + "/contents/\(id)?size=\(size)") else {
+            throw APIError.invalidURL
+        }
+        
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "GET"
+        
+        if let token = authToken {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.serverError((response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        
+        return data
     }
     
-    /// POST /contents — upload image for a post
-    func uploadContent(postId: Int64, imageData: Data, type: String) async throws {
+    /// Returns URL for downloading content by ID (for AsyncImage)
+    func contentURL(id: Int64, size: String = "MEDIUM") -> URL? {
+        return URL(string: APIConfig.baseURL + "/contents/\(id)?size=\(size)")
+    }
+    
+    /// DELETE /contents/{id} — delete content item
+    func deleteContent(id: Int64) async throws {
+        try await voidRequest(path: "/contents/\(id)", method: "DELETE")
+    }
+    
+    /// POST /contents?postId=&type= — upload image for a post
+    func uploadContent(postId: Int64, imageData: Data, type: String = "IMAGE") async throws {
         guard let url = URL(string: APIConfig.baseURL + "/contents?postId=\(postId)&type=\(type)") else {
             throw APIError.invalidURL
         }
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
         
         if let token = authToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         
         let boundary = UUID().uuidString
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -145,9 +212,9 @@ class APIService {
         body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
         body.append(imageData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
+        urlRequest.httpBody = body
         
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await URLSession.shared.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse,
               (200...299).contains(httpResponse.statusCode) else {
             throw APIError.serverError((response as? HTTPURLResponse)?.statusCode ?? -1)

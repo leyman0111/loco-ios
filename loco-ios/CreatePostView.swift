@@ -2,18 +2,27 @@
 //  CreatePostView.swift
 //  loco-ios
 //
-//  Create Post screen matching the design mockup:
-//  - Back arrow + "Create Post" title + Loco logo
-//  - Text area with 0/130 counter
-//  - Camera and Gallery buttons
-//  - Category selector (horizontal pills)
-//  - Location map with "Expand Map" button
-//  - Coral "Publish" button at bottom
+//  Create Post screen with correct flow:
+//  1. On open: POST /posts → get draft (may already have contents)
+//  2. If draft has contents: GET /contents/{id} for each → display them
+//  3. User can delete content: DELETE /contents/{id}
+//  4. User can add new content: POST /contents
+//  5. On Publish: PUT /posts → saves changes, sets status PUBLISHED
 //
 
 import SwiftUI
 import MapKit
-import PhotosUI
+
+// MARK: - ContentItem (loaded content for display)
+
+struct ContentItem: Identifiable {
+    let id: Int64
+    var imageData: Data?
+    var uiImage: UIImage? {
+        guard let data = imageData else { return nil }
+        return UIImage(data: data)
+    }
+}
 
 // MARK: - CreatePostViewModel
 
@@ -22,13 +31,24 @@ class CreatePostViewModel: ObservableObject {
     
     let maxCharacters = 130
     
+    // Draft post returned from POST /posts
+    @Published var draftPost: PostDto?
+    
+    // Content items loaded from server
+    @Published var contentItems: [ContentItem] = []
+    
+    // Newly picked images (not yet uploaded)
+    @Published var pendingImages: [UIImage] = []
+    
     @Published var text = ""
     @Published var selectedCategory: PostCategory?
-    @Published var selectedImages: [UIImage] = []
+    
+    @Published var isLoading = false
     @Published var isPublishing = false
-    @Published var errorMessage: String?
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published var publishedSuccessfully = false
+    
     @Published var showExpandedMap = false
     
     @Published var region = MKCoordinateRegion(
@@ -50,55 +70,115 @@ class CreatePostViewModel: ObservableObject {
         selectedCategory != nil
     }
     
-    // MARK: - Publish
+    private let api = APIService.shared
+    
+    // MARK: - Step 1: Create draft on open
+    
+    func createDraft() async {
+        isLoading = true
+        defer { isLoading = false }
+        
+        do {
+            let draft = try await api.createDraftPost()
+            draftPost = draft
+            
+            // Pre-fill text and category if draft already has them
+            if let existingText = draft.text { text = existingText }
+            if let cat = draft.category,
+               let category = PostCategory(rawValue: cat) {
+                selectedCategory = category
+            }
+            
+            // Step 2: Load existing content if any
+            if let contentIds = draft.contents, !contentIds.isEmpty {
+                await loadExistingContent(ids: contentIds)
+            }
+        } catch {
+            alertMessage = "Не удалось создать черновик: \(error.localizedDescription)"
+            showAlert = true
+        }
+    }
+    
+    // MARK: - Step 2: Load existing content images
+    
+    private func loadExistingContent(ids: [Int64]) async {
+        await withTaskGroup(of: ContentItem?.self) { group in
+            for id in ids {
+                group.addTask {
+                    do {
+                        let data = try await APIService.shared.getContentData(id: id, size: "MEDIUM")
+                        return ContentItem(id: id, imageData: data)
+                    } catch {
+                        return ContentItem(id: id, imageData: nil)
+                    }
+                }
+            }
+            for await item in group {
+                if let item = item {
+                    contentItems.append(item)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Delete existing content
+    
+    func deleteContent(item: ContentItem) async {
+        do {
+            try await api.deleteContent(id: item.id)
+            contentItems.removeAll { $0.id == item.id }
+        } catch {
+            alertMessage = "Не удалось удалить контент: \(error.localizedDescription)"
+            showAlert = true
+        }
+    }
+    
+    // MARK: - Remove pending image (not yet uploaded)
+    
+    func removePendingImage(at index: Int) {
+        guard index < pendingImages.count else { return }
+        pendingImages.remove(at: index)
+    }
+    
+    // MARK: - Step 3: Publish
     
     func publish() async {
-        guard isValid else {
+        guard isValid, let draft = draftPost, let postId = draft.id else {
             alertMessage = "Заполните текст и выберите категорию"
             showAlert = true
             return
         }
         
         isPublishing = true
-        
-        let api = APIService.shared
+        defer { isPublishing = false }
         
         do {
-            // Step 1: Create draft post
-            let draft: PostDto = try await api.createDraftPost()
-            guard let postId = draft.id else {
-                throw NSError(domain: "CreatePost", code: -1, userInfo: [NSLocalizedDescriptionKey: "No post ID received"])
-            }
-            
-            // Step 2: Upload images if any
-            for image in selectedImages {
+            // Upload any pending images first
+            for image in pendingImages {
                 if let data = image.jpegData(compressionQuality: 0.8) {
                     try await api.uploadContent(postId: postId, imageData: data, type: "IMAGE")
                 }
             }
             
-            // Step 3: Publish post with text, category, location
+            // Build updated PostDto and PUT to publish
             let postDto = PostDto(
                 id: postId,
-                author: nil,
-                created: nil,
+                author: draft.author,
+                created: draft.created,
                 text: text,
                 category: selectedCategory?.rawValue,
-                contents: nil,
+                contents: nil, // server manages content list
                 latitude: latitude,
                 longitude: longitude
             )
             _ = try await api.publishPost(postDto: postDto)
             
-            alertMessage = "Пост опубликован!"
-            showAlert = true
+            publishedSuccessfully = true
             
         } catch {
             alertMessage = "Ошибка публикации: \(error.localizedDescription)"
             showAlert = true
         }
-        
-        isPublishing = false
     }
 }
 
@@ -109,58 +189,61 @@ struct CreatePostView: View {
     @Binding var isPresented: Bool
     @StateObject private var viewModel = CreatePostViewModel()
     @State private var showImagePicker = false
-    @State private var showCamera = false
     @State private var imagePickerSource: UIImagePickerController.SourceType = .photoLibrary
     
     var body: some View {
         ZStack {
-            // Background with decorative shapes (same as login)
             backgroundShapes
             
-            VStack(spacing: 0) {
-                // Navigation bar
-                navBar
-                
-                // Scrollable content
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        
-                        // Text area
-                        textArea
-                        
-                        // Media buttons
-                        mediaButtons
-                        
-                        // Category section
-                        categorySection
-                        
-                        // Location section
-                        locationSection
-                        
-                        Spacer(minLength: 100)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
+            if viewModel.isLoading {
+                // Loading state while creating draft
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(1.4)
+                    Text("Подготовка...")
+                        .font(.system(size: 15))
+                        .foregroundColor(LocoTheme.Colors.textSecondary)
                 }
-                
-                // Publish button (pinned to bottom)
-                publishButton
+            } else {
+                VStack(spacing: 0) {
+                    navBar
+                    
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            textArea
+                            mediaSection
+                            categorySection
+                            locationSection
+                            Spacer(minLength: 100)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+                    }
+                    
+                    publishButton
+                }
             }
+        }
+        .task {
+            await viewModel.createDraft()
         }
         .alert(isPresented: $viewModel.showAlert) {
             Alert(
                 title: Text("Уведомление"),
                 message: Text(viewModel.alertMessage),
                 dismissButton: .default(Text("OK")) {
-                    if viewModel.alertMessage == "Пост опубликован!" {
+                    if viewModel.publishedSuccessfully {
                         isPresented = false
                     }
                 }
             )
         }
+        .onChange(of: viewModel.publishedSuccessfully) { success in
+            if success { isPresented = false }
+        }
         .sheet(isPresented: $showImagePicker) {
             ImagePickerView(sourceType: imagePickerSource) { image in
-                viewModel.selectedImages.append(image)
+                viewModel.pendingImages.append(image)
             }
         }
         .fullScreenCover(isPresented: $viewModel.showExpandedMap) {
@@ -173,17 +256,14 @@ struct CreatePostView: View {
     private var backgroundShapes: some View {
         ZStack {
             LocoTheme.Colors.cream.ignoresSafeArea()
-            
             Circle()
                 .fill(LocoTheme.Colors.softBlue)
                 .frame(width: 240, height: 240)
                 .offset(x: -100, y: -320)
-            
             Circle()
                 .fill(LocoTheme.Colors.goldenSand)
                 .frame(width: 300, height: 300)
                 .offset(x: 140, y: 100)
-            
             Circle()
                 .fill(LocoTheme.Colors.softBlue.opacity(0.5))
                 .frame(width: 180, height: 180)
@@ -195,22 +275,16 @@ struct CreatePostView: View {
     
     private var navBar: some View {
         HStack {
-            // Back button
             Button(action: { isPresented = false }) {
                 Image(systemName: "arrow.left")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(LocoTheme.Colors.navy)
             }
-            
             Spacer()
-            
             Text("Create Post")
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(LocoTheme.Colors.navy)
-            
             Spacer()
-            
-            // Logo (right)
             LocoLogoView(fontSize: 22)
         }
         .padding(.horizontal, 20)
@@ -243,13 +317,10 @@ struct CreatePostView: View {
                         }
                     }
             }
-            
-            // Character counter
             Text("\(viewModel.characterCount)/\(viewModel.maxCharacters)")
                 .font(.system(size: 13))
                 .foregroundColor(viewModel.characterCount >= viewModel.maxCharacters
-                    ? .red
-                    : LocoTheme.Colors.textSecondary)
+                    ? .red : LocoTheme.Colors.textSecondary)
                 .padding(.trailing, 14)
                 .padding(.bottom, 10)
         }
@@ -258,59 +329,94 @@ struct CreatePostView: View {
         .shadow(color: .black.opacity(0.07), radius: 10, x: 0, y: 4)
     }
     
-    // MARK: - Media Buttons
+    // MARK: - Media Section (existing + pending images + add buttons)
     
-    private var mediaButtons: some View {
-        HStack(spacing: 12) {
-            // Camera
-            Button(action: {
-                imagePickerSource = .camera
-                showImagePicker = true
-            }) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 22))
-                    .foregroundColor(LocoTheme.Colors.navy)
-                    .frame(width: 52, height: 52)
-                    .background(LocoTheme.Colors.goldenSand)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
-            }
-            
-            // Gallery
-            Button(action: {
-                imagePickerSource = .photoLibrary
-                showImagePicker = true
-            }) {
-                Image(systemName: "photo.fill")
-                    .font(.system(size: 22))
-                    .foregroundColor(LocoTheme.Colors.navy)
-                    .frame(width: 52, height: 52)
-                    .background(LocoTheme.Colors.goldenSand)
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
-            }
-            
-            // Selected images preview
-            ForEach(viewModel.selectedImages.indices, id: \.self) { index in
-                Image(uiImage: viewModel.selectedImages[index])
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 52, height: 52)
-                    .clipShape(Circle())
-                    .overlay(
-                        Button(action: { viewModel.selectedImages.remove(at: index) }) {
+    private var mediaSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                // Camera button
+                Button(action: {
+                    imagePickerSource = .camera
+                    showImagePicker = true
+                }) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(LocoTheme.Colors.navy)
+                        .frame(width: 56, height: 56)
+                        .background(LocoTheme.Colors.goldenSand)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
+                }
+                
+                // Gallery button
+                Button(action: {
+                    imagePickerSource = .photoLibrary
+                    showImagePicker = true
+                }) {
+                    Image(systemName: "photo.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(LocoTheme.Colors.navy)
+                        .frame(width: 56, height: 56)
+                        .background(LocoTheme.Colors.goldenSand)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
+                }
+                
+                // Existing content from server (with delete)
+                ForEach(viewModel.contentItems) { item in
+                    ZStack(alignment: .topTrailing) {
+                        if let uiImage = item.uiImage {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                        } else {
+                            // Placeholder while loading or if failed
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 56, height: 56)
+                                .overlay(
+                                    Image(systemName: "photo")
+                                        .foregroundColor(.gray)
+                                )
+                        }
+                        
+                        // Delete button
+                        Button(action: {
+                            Task { await viewModel.deleteContent(item: item) }
+                        }) {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundColor(.white)
-                                .background(Color.black.opacity(0.5))
+                                .font(.system(size: 18))
+                                .foregroundColor(LocoTheme.Colors.coral)
+                                .background(Color.white)
                                 .clipShape(Circle())
                         }
-                        .offset(x: 16, y: -16),
-                        alignment: .topTrailing
-                    )
+                        .offset(x: 6, y: -6)
+                    }
+                }
+                
+                // Pending images (not yet uploaded, with remove)
+                ForEach(viewModel.pendingImages.indices, id: \.self) { index in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: viewModel.pendingImages[index])
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 56, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        
+                        Button(action: { viewModel.removePendingImage(at: index) }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(LocoTheme.Colors.coral)
+                                .background(Color.white)
+                                .clipShape(Circle())
+                        }
+                        .offset(x: 6, y: -6)
+                    }
+                }
             }
-            
-            Spacer()
+            .padding(.vertical, 4)
         }
     }
     
@@ -347,7 +453,6 @@ struct CreatePostView: View {
                 .foregroundColor(LocoTheme.Colors.navy)
             
             ZStack {
-                // Map preview
                 Map(coordinateRegion: $viewModel.region,
                     interactionModes: [],
                     annotationItems: [MapPin(coordinate: viewModel.region.center)]) { pin in
@@ -362,7 +467,6 @@ struct CreatePostView: View {
                 .cornerRadius(16)
                 .allowsHitTesting(false)
                 
-                // Expand Map button
                 Button(action: { viewModel.showExpandedMap = true }) {
                     Text("Expand Map")
                         .font(.system(size: 14, weight: .medium))
@@ -397,7 +501,9 @@ struct CreatePostView: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 56)
-            .background(viewModel.isValid ? LocoTheme.Colors.buttonPrimary : LocoTheme.Colors.buttonPrimary.opacity(0.5))
+            .background(viewModel.isValid
+                ? LocoTheme.Colors.buttonPrimary
+                : LocoTheme.Colors.buttonPrimary.opacity(0.5))
             .cornerRadius(28)
         }
         .disabled(!viewModel.isValid || viewModel.isPublishing)
@@ -447,7 +553,6 @@ struct ExpandedMapView: View {
                 pinCoordinate = region.center
             }
             
-            // Done button
             VStack {
                 HStack {
                     Spacer()
@@ -499,18 +604,14 @@ struct ImagePickerView: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
     
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
     
     class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let parent: ImagePickerView
+        init(_ parent: ImagePickerView) { self.parent = parent }
         
-        init(_ parent: ImagePickerView) {
-            self.parent = parent
-        }
-        
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let image = info[.originalImage] as? UIImage {
                 parent.onImagePicked(image)
             }
