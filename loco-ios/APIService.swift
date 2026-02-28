@@ -133,6 +133,47 @@ class APIService {
         }
     }
     
+    // MARK: - Auth
+    
+    /// GET /auth/yandex?authCode={code}
+    /// Backend exchanges Yandex authorization code for its own JWT token
+    /// Returns the JWT string to be used as Bearer token in subsequent requests
+    func loginWithYandex(authCode: String) async throws -> String {
+        guard var components = URLComponents(string: APIConfig.baseURL + "/auth/yandex") else {
+            throw APIError.invalidURL
+        }
+        components.queryItems = [URLQueryItem(name: "authCode", value: authCode)]
+        
+        guard let url = components.url else {
+            throw APIError.invalidURL
+        }
+        
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "GET"
+        
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.noData
+        }
+        
+        switch httpResponse.statusCode {
+        case 200...299:
+            // Backend returns JWT as plain string or wrapped in JSON
+            // Try plain string first, then try JSON {"token": "..."}
+            if let jwt = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !jwt.isEmpty {
+                // Remove surrounding quotes if backend returns quoted string
+                return jwt.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            }
+            throw APIError.noData
+        case 401:
+            throw APIError.unauthorized
+        default:
+            throw APIError.serverError(httpResponse.statusCode)
+        }
+    }
+    
     // MARK: - Posts
     
     /// POST /posts/scope — get post markers in area
